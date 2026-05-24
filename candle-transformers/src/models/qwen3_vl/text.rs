@@ -409,7 +409,7 @@ impl Qwen3VLTextModel {
         self.embed_tokens.forward(input_ids)
     }
 
-    pub fn forward_embeds(
+    fn forward_hidden_states(
         &mut self,
         mut xs: Tensor,
         attention_mask: Option<&Tensor>,
@@ -417,8 +417,6 @@ impl Qwen3VLTextModel {
         visual_pos_masks: Option<&Tensor>,
         deepstack_visual_embeds: Option<&[Tensor]>,
     ) -> Result<Tensor> {
-        let (_, seq_len, _) = xs.dims3()?;
-
         for (i, layer) in self.layers.iter_mut().enumerate() {
             xs = layer.forward(
                 &xs,
@@ -438,8 +436,45 @@ impl Qwen3VLTextModel {
             }
         }
 
-        xs = xs.apply(&self.norm)?;
+        xs.apply(&self.norm)
+    }
 
+    /// Run the decoder stack and final RMSNorm without applying `lm_head`.
+    /// Returns post-norm hidden states of shape `(batch, seq_len, hidden_size)`.
+    pub fn forward_hidden(
+        &mut self,
+        xs: Tensor,
+        attention_mask: Option<&Tensor>,
+        position_ids: &Tensor,
+        visual_pos_masks: Option<&Tensor>,
+        deepstack_visual_embeds: Option<&[Tensor]>,
+    ) -> Result<Tensor> {
+        self.forward_hidden_states(
+            xs,
+            attention_mask,
+            position_ids,
+            visual_pos_masks,
+            deepstack_visual_embeds,
+        )
+    }
+
+    pub fn forward_embeds(
+        &mut self,
+        xs: Tensor,
+        attention_mask: Option<&Tensor>,
+        position_ids: &Tensor,
+        visual_pos_masks: Option<&Tensor>,
+        deepstack_visual_embeds: Option<&[Tensor]>,
+    ) -> Result<Tensor> {
+        let (_, seq_len, _) = xs.dims3()?;
+
+        let xs = self.forward_hidden_states(
+            xs,
+            attention_mask,
+            position_ids,
+            visual_pos_masks,
+            deepstack_visual_embeds,
+        )?;
         self.lm_head
             .forward(&xs)?
             .i((.., seq_len - 1, ..))?

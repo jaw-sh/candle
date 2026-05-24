@@ -266,4 +266,42 @@ impl Qwen3VLModel {
     pub fn clear_kv_cache(&mut self) {
         self.text.clear_kv_cache();
     }
+
+    /// Run a text-only prefill and return post-RMSNorm hidden states
+    /// of shape `(batch, seq_len, hidden_size)`, skipping the LM head.
+    ///
+    /// This path is intended for embedding-style fine-tunes where the
+    /// sentence vector is pooled from the text decoder hidden states.
+    /// It clears the KV cache before running and does not consume vision
+    /// inputs.
+    ///
+    /// Callers typically follow up with `i((.., seq_len - 1, ..))` to
+    /// extract the last-token hidden state, then L2-normalize.
+    pub fn forward_text_hidden(
+        &mut self,
+        input_ids: &Tensor,
+        position_ids: &Tensor,
+    ) -> Result<Tensor> {
+        let (bs, seqlen) = input_ids.dims2()?;
+        self.clear_kv_cache();
+        let attention_mask = if seqlen > 1 {
+            Some(self.prepare_decoder_attention_mask(
+                bs,
+                seqlen,
+                0,
+                self.text.dtype,
+                input_ids.device(),
+            )?)
+        } else {
+            None
+        };
+        let input_embeds = self.text.embed_tokens(input_ids)?;
+        self.text.forward_hidden(
+            input_embeds,
+            attention_mask.as_ref(),
+            position_ids,
+            None,
+            None,
+        )
+    }
 }
